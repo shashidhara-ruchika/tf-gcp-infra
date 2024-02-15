@@ -36,6 +36,30 @@ terraform validate
 terraform apply
 ```
 
+## API & Services
+
+### Enabled:
+
+Used
+- Compute Engine API
+- Cloud DNS API
+
+Unused:
+- Artifact Registry API
+- Cloud Build API
+- Cloud FUnctions API
+- Cloud Logging API
+- Cloud Monitoring API
+- Cloud OS Login API
+- Cloud Pub/Sub API
+- Cloud SQL Admin API
+- Cloud Storage
+- Container Registry API
+- Google Console Storage JSON API
+- IAM Service Account Credentials API
+- Identity and Access Management (IAM) API
+- Legacy Cloud Source Repositories API
+
 ## References:
 1. [Install Chocolatey](https://docs.chocolatey.org/en-us/choco/setup)
 2. [Install Terraform using Chocolatey](https://community.chocolatey.org/packages/terraform)
