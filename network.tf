@@ -55,21 +55,21 @@ variable "vpcs" {
 }
 
 variable "credentials_file_path" {
-  description = "service-account-key.json"
+  description = "The path to the service account key file."
   type        = string
 }
 
 variable "project_id" {
-  description = "Project ID"
+  description = "The ID of the Google Cloud Platform project."
   type        = string
 }
 
 variable "region" {
-  description = "GCP Region"
+  description = "The region where resources will be deployed."
   type        = string
 }
 
 variable "vpc_route_webapp_route_priority" {
-  description = "priority"
+  description = "The priority for the web application route."
   type        = number
 }
