@@ -4,42 +4,83 @@ provider "google" {
   region      = var.region
 }
 
-# Loop through the list of VPC configurations and create VPCs
 resource "google_compute_network" "vpc" {
-  count                           = length(var.vpcs)
-  name                            = var.vpcs[count.index].vpc_name
-  auto_create_subnetworks         = var.vpcs[count.index].vpc_auto_create_subnetworks
-  routing_mode                    = var.vpcs[count.index].vpc_routing_mode
-  delete_default_routes_on_create = var.vpcs[count.index].vpc_delete_default_routes_on_create
+  count                           = length(var.iaac)
+  name                            = var.iaac[count.index].vpc_name
+  auto_create_subnetworks         = var.iaac[count.index].vpc_auto_create_subnetworks
+  routing_mode                    = var.iaac[count.index].vpc_routing_mode
+  delete_default_routes_on_create = var.iaac[count.index].vpc_delete_default_routes_on_create
 }
 
 resource "google_compute_subnetwork" "webapp" {
-  count         = length(var.vpcs)
-  name          = var.vpcs[count.index].vpc_subnet_webapp_name
-  ip_cidr_range = var.vpcs[count.index].vpc_subnet_webapp_ip_cidr_range
+  count         = length(var.iaac)
+  name          = var.iaac[count.index].vpc_subnet_webapp_name
+  ip_cidr_range = var.iaac[count.index].vpc_subnet_webapp_ip_cidr_range
   network       = google_compute_network.vpc[count.index].self_link
   region        = var.region
 }
 
 resource "google_compute_subnetwork" "db" {
-  count         = length(var.vpcs)
-  name          = var.vpcs[count.index].vpc_subnet_db_name
-  ip_cidr_range = var.vpcs[count.index].vpc_subnet_db_ip_cidr_range
+  count         = length(var.iaac)
+  name          = var.iaac[count.index].vpc_subnet_db_name
+  ip_cidr_range = var.iaac[count.index].vpc_subnet_db_ip_cidr_range
   network       = google_compute_network.vpc[count.index].self_link
   region        = var.region
 }
 
 resource "google_compute_route" "webapp_route" {
-  count            = length(var.vpcs)
+  count            = length(var.iaac)
   name             = "webapp-route-${count.index}"
   network          = google_compute_network.vpc[count.index].self_link
-  dest_range       = var.vpcs[count.index].vpc_dest_range
-  next_hop_gateway = var.vpcs[count.index].vpc_next_hop_gateway
-  priority         = var.vpc_route_webapp_route_priority
+  dest_range       = var.iaac[count.index].vpc_dest_range
+  next_hop_gateway = var.iaac[count.index].vpc_next_hop_gateway
+  priority         = var.iaac[count.index].vpc_route_webapp_route_priority
 }
 
-# Define a variable to store VPC configurations
-variable "vpcs" {
+resource "google_compute_firewall" "allow_iap" {
+  count   = length(var.iaac)
+  name    = "allow-iap-${count.index}"
+  network = google_compute_network.vpc[count.index].name
+
+  allow {
+    protocol = var.iaac[count.index].firewall_allow_protocol
+    ports    = var.iaac[count.index].firewall_allow_ports
+  }
+
+  source_ranges = var.iaac[count.index].firewall_source_ranges
+  target_tags   = var.iaac[count.index].compute_engine_webapp_tags
+}
+
+resource "google_compute_instance" "webapp_instance" {
+  count        = length(var.iaac)
+  name         = "webapp-instance-${count.index}"
+  machine_type = var.iaac[count.index].compute_engine_machine_type
+  zone         = var.iaac[count.index].compute_engine_machine_zone
+
+  boot_disk {
+    initialize_params {
+      image = var.iaac[count.index].boot_disk_image
+      type  = var.iaac[count.index].boot_disk_type
+      size  = var.iaac[count.index].boot_disk_size
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.vpc[count.index].self_link
+    subnetwork = google_compute_subnetwork.webapp[count.index].self_link
+    access_config {
+
+    }
+
+  }
+
+
+  tags       = var.iaac[count.index].compute_engine_webapp_tags
+  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap]
+
+}
+
+variable "iaac" {
   type = list(object({
     vpc_name                            = string
     vpc_subnet_webapp_name              = string
@@ -51,6 +92,16 @@ variable "vpcs" {
     vpc_auto_create_subnetworks         = bool
     vpc_delete_default_routes_on_create = bool
     vpc_next_hop_gateway                = string
+    vpc_route_webapp_route_priority     = number
+    compute_engine_webapp_tags          = list(string)
+    boot_disk_image                     = string
+    boot_disk_type                      = string
+    boot_disk_size                      = number
+    firewall_source_ranges              = list(string)
+    firewall_allow_protocol             = string
+    firewall_allow_ports                = list(string)
+    compute_engine_machine_type         = string
+    compute_engine_machine_zone         = string
   }))
 }
 
@@ -67,9 +118,4 @@ variable "project_id" {
 variable "region" {
   description = "The region where resources will be deployed."
   type        = string
-}
-
-variable "vpc_route_webapp_route_priority" {
-  description = "The priority for the web application route."
-  type        = number
 }
