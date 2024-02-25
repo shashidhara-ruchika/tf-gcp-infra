@@ -52,6 +52,7 @@ Unused:
 - Cloud SQL Admin API
 - IAM Service Account Credentials API
 - Identity and Access Management (IAM) API
+- Service Netwoking API
 
 ## References:
 1. [Install Chocolatey](https://docs.chocolatey.org/en-us/choco/setup)

@@ -47,8 +47,25 @@ resource "google_compute_firewall" "allow_iap" {
     ports    = var.iaac[count.index].firewall_allow_ports
   }
 
-  source_ranges = var.iaac[count.index].firewall_source_ranges
-  target_tags   = var.iaac[count.index].compute_engine_webapp_tags
+  source_ranges = [var.iaac[count.index].vpc_dest_range]
+  target_tags   = [var.iaac[count.index].compute_engine_webapp_tag]
+
+  priority = var.iaac[count.index].firewall_allow_priority
+}
+
+resource "google_compute_firewall" "deny_all" {
+  count   = length(var.iaac)
+  name    = "deny-all-${count.index}"
+  network = google_compute_network.vpc[count.index].name
+
+  deny {
+    protocol = "all"
+  }
+
+  source_ranges = [var.iaac[count.index].vpc_dest_range]
+  target_tags   = [var.iaac[count.index].compute_engine_webapp_tag]
+
+  priority = var.iaac[count.index].firewall_deny_priority
 }
 
 resource "google_compute_instance" "webapp_instance" {
@@ -74,9 +91,8 @@ resource "google_compute_instance" "webapp_instance" {
 
   }
 
-
-  tags       = var.iaac[count.index].compute_engine_webapp_tags
-  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap]
+  tags       = [var.iaac[count.index].compute_engine_webapp_tag]
+  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all]
 
 }
 
@@ -93,15 +109,16 @@ variable "iaac" {
     vpc_delete_default_routes_on_create = bool
     vpc_next_hop_gateway                = string
     vpc_route_webapp_route_priority     = number
-    compute_engine_webapp_tags          = list(string)
+    compute_engine_webapp_tag           = string
+    compute_engine_machine_type         = string
+    compute_engine_machine_zone         = string
     boot_disk_image                     = string
     boot_disk_type                      = string
     boot_disk_size                      = number
-    firewall_source_ranges              = list(string)
     firewall_allow_protocol             = string
     firewall_allow_ports                = list(string)
-    compute_engine_machine_type         = string
-    compute_engine_machine_zone         = string
+    firewall_allow_priority             = string
+    firewall_deny_priority              = string
   }))
 }
 
