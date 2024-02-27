@@ -1,7 +1,6 @@
 provider "google" {
   credentials = file(var.credentials_file_path)
   project     = var.project_id
-  region      = var.region
 }
 
 resource "google_compute_network" "vpc" {
@@ -17,7 +16,7 @@ resource "google_compute_subnetwork" "webapp" {
   name          = var.iaac[count.index].vpc_subnet_webapp_name
   ip_cidr_range = var.iaac[count.index].vpc_subnet_webapp_ip_cidr_range
   network       = google_compute_network.vpc[count.index].self_link
-  region        = var.region
+  region        = var.iaac[count.index].region
 }
 
 resource "google_compute_subnetwork" "db" {
@@ -25,7 +24,7 @@ resource "google_compute_subnetwork" "db" {
   name          = var.iaac[count.index].vpc_subnet_db_name
   ip_cidr_range = var.iaac[count.index].vpc_subnet_db_ip_cidr_range
   network       = google_compute_network.vpc[count.index].self_link
-  region        = var.region
+  region        = var.iaac[count.index].region
 }
 
 resource "google_compute_route" "webapp_route" {
@@ -109,6 +108,7 @@ variable "iaac" {
     vpc_delete_default_routes_on_create = bool
     vpc_next_hop_gateway                = string
     vpc_route_webapp_route_priority     = number
+    region                              = string
     compute_engine_webapp_tag           = string
     compute_engine_machine_type         = string
     compute_engine_machine_zone         = string
@@ -131,9 +131,3 @@ variable "project_id" {
   description = "The ID of the Google Cloud Platform project."
   type        = string
 }
-
-variable "region" {
-  description = "The region where resources will be deployed."
-  type        = string
-}
-
