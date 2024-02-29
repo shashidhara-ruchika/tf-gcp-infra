@@ -47,10 +47,10 @@ resource "google_compute_route" "webapp_route" {
 resource "google_compute_global_address" "private_ip_address" {
   count         = length(var.iaac)
   name          = "private-ip-address-${count.index}"
-  address_type  = "INTERNAL"
-  purpose       = "VPC_PEERING"
+  address_type  = var.iaac[count.index].global_address_address_type
+  purpose       = var.iaac[count.index].global_address_purpose
   network       = google_compute_network.vpc[count.index].self_link
-  prefix_length = 24
+  prefix_length = var.iaac[count.index].global_address_prefix_length
   # address      = "10.0.2.3"
 
   depends_on = [google_compute_network.vpc]
@@ -59,7 +59,7 @@ resource "google_compute_global_address" "private_ip_address" {
 resource "google_service_networking_connection" "private_vpc_connection" {
   count                   = length(var.iaac)
   network                 = google_compute_network.vpc[count.index].self_link
-  service                 = "servicenetworking.googleapis.com"
+  service                 = var.iaac[count.index].google_service_nw_connection_service
   reserved_peering_ranges = [google_compute_global_address.private_ip_address[count.index].name]
 
   depends_on = [google_compute_network.vpc, google_compute_global_address.private_ip_address]
@@ -198,29 +198,34 @@ variable "project_id" {
 variable "iaac" {
   description = "Infra as code variables"
   type = list(object({
-    vpc_name                            = string
-    vpc_subnet_webapp_name              = string
-    vpc_subnet_webapp_ip_cidr_range     = string
-    vpc_subnet_db_name                  = string
-    vpc_subnet_db_ip_cidr_range         = string
-    vpc_routing_mode                    = string
-    vpc_dest_range                      = string
-    vpc_auto_create_subnetworks         = bool
-    vpc_delete_default_routes_on_create = bool
-    vpc_next_hop_gateway                = string
-    vpc_route_webapp_route_priority     = number
-    region                              = string
-    vpc_subnet_private_ip_google_access = bool
-    compute_engine_webapp_tag           = string
-    compute_engine_machine_type         = string
-    compute_engine_machine_zone         = string
-    boot_disk_image                     = string
-    boot_disk_type                      = string
-    boot_disk_size                      = number
-    firewall_allow_protocol             = string
-    firewall_allow_ports                = list(string)
-    firewall_allow_priority             = string
-    firewall_deny_priority              = string
+    vpc_name                             = string
+    vpc_subnet_webapp_name               = string
+    vpc_subnet_webapp_ip_cidr_range      = string
+    vpc_subnet_db_name                   = string
+    vpc_subnet_db_ip_cidr_range          = string
+    vpc_routing_mode                     = string
+    vpc_dest_range                       = string
+    vpc_auto_create_subnetworks          = bool
+    vpc_delete_default_routes_on_create  = bool
+    vpc_next_hop_gateway                 = string
+    vpc_route_webapp_route_priority      = number
+    region                               = string
+    vpc_subnet_private_ip_google_access  = bool
+    compute_engine_webapp_tag            = string
+    compute_engine_machine_type          = string
+    compute_engine_machine_zone          = string
+    boot_disk_image                      = string
+    boot_disk_type                       = string
+    boot_disk_size                       = number
+    firewall_allow_protocol              = string
+    firewall_allow_ports                 = list(string)
+    firewall_allow_priority              = string
+    firewall_deny_priority               = string
+    global_address_address_type          = string
+    global_address_purpose               = string
+    global_address_prefix_length         = number
+    google_service_nw_connection_service = string
+
     database = object({
       database_version          = string
       region                    = string
