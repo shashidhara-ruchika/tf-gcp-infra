@@ -17,7 +17,6 @@ resource "google_compute_subnetwork" "webapp" {
   ip_cidr_range = var.iaac[count.index].vpc_subnet_webapp_ip_cidr_range
   network       = google_compute_network.vpc[count.index].self_link
   region        = var.iaac[count.index].region
-  # private_ip_google_access = var.iaac[count.index].vpc_subnet_private_ip_google_access
 
   depends_on = [google_compute_network.vpc]
 }
@@ -51,7 +50,6 @@ resource "google_compute_global_address" "private_ip_address" {
   purpose       = var.iaac[count.index].global_address_purpose
   network       = google_compute_network.vpc[count.index].self_link
   prefix_length = var.iaac[count.index].global_address_prefix_length
-  # address      = "10.0.2.3"
 
   depends_on = [google_compute_network.vpc]
 }
@@ -154,6 +152,35 @@ resource "google_compute_firewall" "deny_all" {
   depends_on = [google_compute_network.vpc]
 }
 
+resource "google_service_account" "service_account" {
+
+  account_id                   = var.service_account.account_id
+  display_name                 = var.service_account.display_name
+  create_ignore_already_exists = var.service_account.create_ignore_already_exists
+}
+
+resource "google_project_iam_binding" "service_account_logging_admin" {
+  project = var.project_id
+  role    = var.roles.logging_admin_role
+
+  members = [
+    "serviceAccount:${google_service_account.service_account.email}"
+  ]
+
+  depends_on = [google_service_account.service_account]
+}
+
+resource "google_project_iam_binding" "service_account_monitoring_metric_writer" {
+  project = var.project_id
+  role    = var.roles.monitoring_metric_writer_role
+
+  members = [
+    "serviceAccount:${google_service_account.service_account.email}"
+  ]
+
+  depends_on = [google_service_account.service_account]
+}
+
 resource "google_compute_instance" "webapp_instance" {
   count        = length(var.iaac)
   name         = "webapp-instance-${count.index}"
@@ -178,11 +205,29 @@ resource "google_compute_instance" "webapp_instance" {
 
   }
 
+  allow_stopping_for_update = var.iaac[count.index].compute_engine_allow_stopping_for_update
+
+  service_account {
+    email  = google_service_account.service_account.email
+    scopes = var.iaac[count.index].compute_engine_service_account_scopes
+  }
+
   tags       = [var.iaac[count.index].compute_engine_webapp_tag]
-  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user]
+  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer]
 
   metadata_startup_script = "#!/bin/bash\ncd /opt/csye6225/webapp\nsed -i \"s/DATABASE_NAME=.*/DATABASE_NAME=${var.iaac[count.index].database.database_name}/\" .env\nsed -i \"s/DATABASE_USER=.*/DATABASE_USER=${var.iaac[count.index].database.database_user}/\" .env\nsed -i \"s/DATABASE_PASSWORD=.*/DATABASE_PASSWORD=${random_password.webapp_db_password[count.index].result}/\" .env\nsed -i \"s/DATABASE_HOST=.*/DATABASE_HOST=${google_sql_database_instance.webapp_cloudsql_instance[count.index].ip_address.0.ip_address}/\" .env\nsudo systemctl daemon-reload\nsudo systemctl restart webapp\nsudo systemctl daemon-reload\n"
 
+}
+
+resource "google_dns_record_set" "dns_record" {
+  count        = length(var.iaac)
+  name         = var.iaac[count.index].dns_record.domain_name
+  managed_zone = var.iaac[count.index].dns_record.managed_zone_dns_name
+  ttl          = var.iaac[count.index].dns_record.ttl
+  type         = var.iaac[count.index].dns_record.type
+  rrdatas      = [google_compute_instance.webapp_instance[count.index].network_interface[0].access_config[0].nat_ip]
+
+  depends_on = [google_compute_instance.webapp_instance]
 }
 
 variable "credentials_file_path" {
@@ -198,29 +243,35 @@ variable "project_id" {
 variable "iaac" {
   description = "Infra as code variables"
   type = list(object({
-    vpc_name                             = string
-    vpc_subnet_webapp_name               = string
-    vpc_subnet_webapp_ip_cidr_range      = string
-    vpc_subnet_db_name                   = string
-    vpc_subnet_db_ip_cidr_range          = string
-    vpc_routing_mode                     = string
-    vpc_dest_range                       = string
-    vpc_auto_create_subnetworks          = bool
-    vpc_delete_default_routes_on_create  = bool
-    vpc_next_hop_gateway                 = string
-    vpc_route_webapp_route_priority      = number
-    region                               = string
-    vpc_subnet_private_ip_google_access  = bool
-    compute_engine_webapp_tag            = string
-    compute_engine_machine_type          = string
-    compute_engine_machine_zone          = string
-    boot_disk_image                      = string
-    boot_disk_type                       = string
-    boot_disk_size                       = number
-    firewall_allow_protocol              = string
-    firewall_allow_ports                 = list(string)
-    firewall_allow_priority              = string
-    firewall_deny_priority               = string
+    vpc_name                            = string
+    vpc_subnet_webapp_name              = string
+    vpc_subnet_webapp_ip_cidr_range     = string
+    vpc_subnet_db_name                  = string
+    vpc_subnet_db_ip_cidr_range         = string
+    vpc_routing_mode                    = string
+    vpc_dest_range                      = string
+    vpc_auto_create_subnetworks         = bool
+    vpc_delete_default_routes_on_create = bool
+    vpc_next_hop_gateway                = string
+    vpc_route_webapp_route_priority     = number
+    region                              = string
+    vpc_subnet_private_ip_google_access = bool
+
+    compute_engine_webapp_tag                = string
+    compute_engine_machine_type              = string
+    compute_engine_machine_zone              = string
+    boot_disk_image                          = string
+    boot_disk_type                           = string
+    boot_disk_size                           = number
+    compute_engine_allow_stopping_for_update = bool
+    compute_engine_service_account_scopes    = list(string)
+
+    firewall_allow_protocol = string
+    firewall_allow_ports    = list(string)
+    firewall_allow_priority = string
+
+    firewall_deny_priority = string
+
     global_address_address_type          = string
     global_address_purpose               = string
     global_address_prefix_length         = number
@@ -243,25 +294,31 @@ variable "iaac" {
       database_user             = string
       root_password             = string
     })
+
+    dns_record = object({
+      domain_name           = string
+      managed_zone_dns_name = string
+      ttl                   = number
+      type                  = string
+    })
+
   }))
 }
 
-variable "database" {
-  description = "Database variables"
+variable "service_account" {
+  description = "Service account variables"
   type = object({
-    database_version          = string
-    region                    = string
-    deletion_protection       = bool
-    tier                      = string
-    availability_type         = string
-    disk_type                 = string
-    disk_size                 = number
-    ipv4_enabled              = bool
-    enabled_private_path      = bool
-    database_name             = string
-    password_length           = number
-    password_includes_special = bool
-    password_override_special = string
-    database_user             = string
+    account_id                   = string
+    display_name                 = string
+    create_ignore_already_exists = bool
+  })
+
+}
+
+variable "roles" {
+  description = "Project Iam Binding Roles"
+  type = object({
+    logging_admin_role            = string
+    monitoring_metric_writer_role = string
   })
 }
