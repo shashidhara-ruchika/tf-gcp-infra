@@ -3,26 +3,35 @@
 My IaaC using Terraform for Google Cloud Platform for: [CYSE6225 Network Structures &amp; Cloud Computing](https://spring2024.csye6225.cloud/)
 
 ### Networking Setup
-1. VPC Network:
+- VPC Network:
    - Disabled auto-create 
    - Regional routing mode
    - No default routes
-2. Subnet #1: webapp
+- Subnet #1: webapp
    - /24 CIDR range
-3. Subnet #2: db
+- Subnet #2: db
    - /24 CIDR range
-4. Attached Internet Gateway to the VPC for allowing incoming requests
-5. VPC Peering Connection for connection to Private CloudSQL
-6. VPC Serverless Access for connection to CloudSQL
-7. Firewall, Ingress:
-   - Allow only 8080
+- Attached Internet Gateway to the VPC for allowing incoming requests
+- VPC Peering Connection for connection to Private CloudSQL
+- VPC Serverless Access for connection to CloudSQL
+- Firewall, Ingress:
+   - Allow only tcp:8080 for load balancer default source ranges
+   - Allow only tcp:22 for ssh for vm instances
    - Deny all
 
 ### Database Set Up
 PostgreSQL Private Cloud SQL attached to VPC
 
-### Instance
-Webapp compute instance attached to webapp subnet of VPC
+### Instance Template
+All configuartions to webapplication added to Instance Template
+
+### Auto Scaler
+Lifecycle of instance automatically managed for webapp instances
+
+### Load Balancer
+- Frontend Load balancer: Supporting only https, set up with SSL Certificates
+- Backend Load Balancer: Configrable Load balancing strategies
+- Health Check: /healthz
    
 ### Event-Driven
 Email Verification Event sent in PubSub 
