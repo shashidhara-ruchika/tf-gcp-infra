@@ -86,6 +86,17 @@ resource "google_project_iam_binding" "cloud_run_invoker_role" {
   depends_on = [google_service_account.service_account]
 }
 
+resource "google_cloud_run_service_iam_member" "cloud_run_invoker" {
+  count    = var.replica
+  project  = google_cloudfunctions2_function.function[count.index].project
+  location = google_cloudfunctions2_function.function[count.index].location
+  service  = google_cloudfunctions2_function.function[count.index].name
+  role     = var.roles.cloud_run_invoker_role
+  member   = "serviceAccount:${google_service_account.service_account.email}"
+
+  depends_on = [google_cloudfunctions2_function.function, google_service_account.service_account]
+}
+
 resource "google_compute_network" "vpc" {
   count                           = var.replica
   name                            = "${var.vpc.name}-${count.index}"
@@ -193,54 +204,136 @@ resource "google_compute_firewall" "deny_all" {
   depends_on = [google_compute_network.vpc]
 }
 
+resource "google_compute_firewall" "allow_load_balancer" {
+  count   = var.replica
+  name    = "load-balancer-firewall-${count.index}"
+  network = google_compute_network.vpc[count.index].name
+
+  allow {
+    protocol = var.firewall_load_balancer_allow.firewall_load_balancer_allow_protocol
+    ports    = var.firewall_load_balancer_allow.firewall_load_balancer_allow_ports
+  }
+
+  source_ranges = var.firewall_load_balancer_allow.source_ranges
+  target_tags   = [var.compute_engine.compute_engine_webapp_tag]
+
+  priority = var.firewall_load_balancer_allow.firewall_load_balancer_allow_priority
+
+  depends_on = [google_compute_network.vpc]
+
+}
+
+resource "google_compute_managed_ssl_certificate" "webapp_ssl_certificate" {
+  name = "webapp-ssl-certificate"
+
+  managed {
+    domains = [var.dns_record.domain_name]
+  }
+}
+
+resource "google_compute_global_address" "webapp_forward_address" {
+  count   = var.replica
+  project = var.project_id
+  name    = "webapp-forward-address-${count.index}"
+}
+
 resource "google_dns_record_set" "dns_record" {
   count        = var.replica
   name         = var.dns_record.domain_name
   managed_zone = var.dns_record.managed_zone_dns_name
   ttl          = var.dns_record.ttl
   type         = var.dns_record.type
-  rrdatas      = [google_compute_instance.webapp_instance[count.index].network_interface[0].access_config[0].nat_ip]
+  # rrdatas      = [google_compute_instance.webapp_instance[count.index].network_interface[0].access_config[0].nat_ip]
+  rrdatas = [google_compute_global_address.webapp_forward_address[count.index].address]
 
-
-  depends_on = [google_compute_instance.webapp_instance]
+  # depends_on = [google_compute_instance.webapp_instance]
+  depends_on = [google_compute_global_address.webapp_forward_address, google_compute_region_instance_template.webapp_instance_template]
 }
 
-resource "google_compute_instance" "webapp_instance" {
-  count        = var.replica
-  name         = "webapp-instance-${count.index}"
-  machine_type = var.compute_engine.compute_engine_machine_type
-  zone         = var.compute_engine.compute_engine_machine_zone
+# resource "google_compute_instance" "webapp_instance" {
+#   count        = var.replica
+#   name         = "webapp-instance-${count.index}"
+#   machine_type = var.compute_engine.compute_engine_machine_type
+#   zone         = var.compute_engine.compute_engine_machine_zone
 
-  boot_disk {
-    initialize_params {
-      image = var.compute_engine.boot_disk_image
-      type  = var.compute_engine.boot_disk_type
-      size  = var.compute_engine.boot_disk_size
-    }
+#   boot_disk {
+#     initialize_params {
+#       image = var.compute_engine.boot_disk_image
+#       type  = var.compute_engine.boot_disk_type
+#       size  = var.compute_engine.boot_disk_size
+#     }
+#   }
+
+#   network_interface {
+#     network    = google_compute_network.vpc[count.index].self_link
+#     subnetwork = google_compute_subnetwork.webapp[count.index].self_link
+
+#     access_config {
+
+#     }
+
+#   }
+
+#   allow_stopping_for_update = var.compute_engine.compute_engine_allow_stopping_for_update
+
+#   service_account {
+#     email  = google_service_account.service_account.email
+#     scopes = var.compute_engine.compute_engine_service_account_scopes
+#   }
+
+#   tags       = [var.compute_engine.compute_engine_webapp_tag]
+#   depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer, google_pubsub_topic.verify_email_topic, google_pubsub_subscription.verify_email_subscription, google_vpc_access_connector.serverless_connector]
+
+#   metadata_startup_script = "#!/bin/bash\ncd /opt/csye6225/webapp\nsed -i \"s/DATABASE_NAME=.*/DATABASE_NAME=${var.database.database_name}/\" .env\nsed -i \"s/DATABASE_USER=.*/DATABASE_USER=${var.database.database_user}/\" .env\nsed -i \"s/DATABASE_PASSWORD=.*/DATABASE_PASSWORD=${random_password.webapp_db_password.result}/\" .env\nsed -i \"s/DATABASE_HOST=.*/DATABASE_HOST=${google_sql_database_instance.webapp_cloudsql_instance.ip_address.0.ip_address}/\" .env\nsudo systemctl daemon-reload\nsudo systemctl restart webapp\nsudo systemctl daemon-reload\n"
+
+# }
+
+resource "google_compute_region_instance_template" "webapp_instance_template" {
+  count          = var.replica
+  name           = "webapp-instance-template-${count.index}"
+  machine_type   = var.compute_engine.compute_engine_machine_type
+  region         = var.region
+  can_ip_forward = var.compute_engine.can_ip_forward
+
+  disk {
+    source_image = var.compute_engine.boot_disk_image
+    disk_size_gb = var.compute_engine.boot_disk_size
+    disk_type    = var.compute_engine.boot_disk_type
+    auto_delete  = var.compute_engine.disk_auto_delete
+    boot         = var.compute_engine.boot_disk
+  }
+
+  reservation_affinity {
+    type = var.compute_engine.reservation_affinity_type
   }
 
   network_interface {
     network    = google_compute_network.vpc[count.index].self_link
     subnetwork = google_compute_subnetwork.webapp[count.index].self_link
-
     access_config {
 
     }
-
   }
 
-  allow_stopping_for_update = var.compute_engine.compute_engine_allow_stopping_for_update
+  scheduling {
+    automatic_restart = var.compute_engine.scheduling_automatic_restart
+    preemptible       = var.compute_engine.scheduling_preemptible
+  }
 
   service_account {
     email  = google_service_account.service_account.email
     scopes = var.compute_engine.compute_engine_service_account_scopes
   }
 
-  tags       = [var.compute_engine.compute_engine_webapp_tag]
-  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer, google_pubsub_topic.verify_email_topic, google_pubsub_subscription.verify_email_subscription, google_vpc_access_connector.serverless_connector]
+  labels = {
+    gce-service-proxy = "on"
+  }
+
+  tags = [var.compute_engine.compute_engine_webapp_tag]
 
   metadata_startup_script = "#!/bin/bash\ncd /opt/csye6225/webapp\nsed -i \"s/DATABASE_NAME=.*/DATABASE_NAME=${var.database.database_name}/\" .env\nsed -i \"s/DATABASE_USER=.*/DATABASE_USER=${var.database.database_user}/\" .env\nsed -i \"s/DATABASE_PASSWORD=.*/DATABASE_PASSWORD=${random_password.webapp_db_password.result}/\" .env\nsed -i \"s/DATABASE_HOST=.*/DATABASE_HOST=${google_sql_database_instance.webapp_cloudsql_instance.ip_address.0.ip_address}/\" .env\nsudo systemctl daemon-reload\nsudo systemctl restart webapp\nsudo systemctl daemon-reload\n"
 
+  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer, google_pubsub_topic.verify_email_topic, google_pubsub_subscription.verify_email_subscription, google_vpc_access_connector.serverless_connector]
 }
 
 resource "google_sql_database_instance" "webapp_cloudsql_instance" {
@@ -374,21 +467,131 @@ resource "google_cloudfunctions2_function" "function" {
     service_account_email = google_service_account.service_account.email
   }
 
-  depends_on = [google_sql_database_instance.webapp_cloudsql_instance, google_pubsub_topic.verify_email_topic, google_compute_instance.webapp_instance]
+  depends_on = [google_sql_database_instance.webapp_cloudsql_instance, google_pubsub_topic.verify_email_topic]
 }
 
-resource "google_cloud_run_service_iam_member" "cloud_run_invoker" {
-  count    = var.replica
-  project  = google_cloudfunctions2_function.function[count.index].project
-  location = google_cloudfunctions2_function.function[count.index].location
-  service  = google_cloudfunctions2_function.function[count.index].name
-  role     = var.roles.cloud_run_invoker_role
-  member   = "serviceAccount:${google_service_account.service_account.email}"
+resource "google_compute_health_check" "webapp_health_check" {
+  name                = "webapp-health-check"
+  check_interval_sec  = var.health_check.check_interval_sec
+  timeout_sec         = var.health_check.timeout_sec
+  healthy_threshold   = var.health_check.healthy_threshold
+  unhealthy_threshold = var.health_check.unhealthy_threshold
 
-  depends_on = [google_cloudfunctions2_function.function, google_service_account.service_account]
+  http_health_check {
+    port         = var.health_check.port
+    port_name    = var.health_check.port_name
+    request_path = var.health_check.request_path
+  }
 }
 
+resource "google_compute_region_instance_group_manager" "webapp_instance_group_manager" {
+  count              = var.replica
+  name               = "${var.webapp_instance_group_manager.name}-${count.index}"
+  base_instance_name = var.webapp_instance_group_manager.base_instance_name
+  description        = var.webapp_instance_group_manager.description
+  region             = var.region
+  version {
+    instance_template = google_compute_region_instance_template.webapp_instance_template[count.index].self_link
+  }
 
+  distribution_policy_target_shape = var.webapp_instance_group_manager.distribution_policy_target_shape
+  distribution_policy_zones        = var.webapp_instance_group_manager.distribution_policy_zones
+
+  named_port {
+    name = var.health_check.port_name
+    port = var.health_check.port
+  }
+
+  auto_healing_policies {
+    initial_delay_sec = var.webapp_instance_group_manager.auto_healing_policy_inital_delay_sec
+    health_check      = google_compute_health_check.webapp_health_check.self_link
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  instance_lifecycle_policy {
+    default_action_on_failure = var.webapp_instance_group_manager.default_action_on_failure
+  }
+
+  depends_on = [google_compute_region_instance_template.webapp_instance_template, google_compute_health_check.webapp_health_check]
+}
+
+resource "google_compute_backend_service" "webapp_load_balancer" {
+  count = var.replica
+  name  = "${var.load_balancer.name}-${count.index}"
+
+  backend {
+    group           = google_compute_region_instance_group_manager.webapp_instance_group_manager[count.index].instance_group
+    balancing_mode  = var.load_balancer.balancing_mode
+    capacity_scaler = var.load_balancer.capacity_scaler
+  }
+
+  health_checks = [google_compute_health_check.webapp_health_check.self_link]
+
+  protocol              = var.load_balancer.protocol
+  port_name             = var.load_balancer.port_name
+  load_balancing_scheme = var.load_balancer.load_balancing_scheme
+  timeout_sec           = var.load_balancer.timeout_sec
+  enable_cdn            = var.load_balancer.enable_cdn
+  # locality_lb_policy    = var.load_balancer.locality_lb_policy
+
+  depends_on = [google_compute_region_instance_group_manager.webapp_instance_group_manager, google_compute_health_check.webapp_health_check]
+}
+
+resource "google_compute_url_map" "webapp_url_map" {
+  count           = var.replica
+  name            = "webapp-url-map"
+  default_service = google_compute_backend_service.webapp_load_balancer[count.index].self_link
+
+  depends_on = [google_compute_backend_service.webapp_load_balancer]
+}
+
+resource "google_compute_region_autoscaler" "webapp_autoscaler" {
+  count  = var.replica
+  name   = "${var.auto_scaler.name}-${count.index}"
+  target = google_compute_region_instance_group_manager.webapp_instance_group_manager[count.index].id
+  region = var.region
+  autoscaling_policy {
+    max_replicas    = var.auto_scaler.max_repliacs
+    min_replicas    = var.auto_scaler.min_replicas
+    cooldown_period = var.auto_scaler.cooldown_period
+    cpu_utilization {
+      target = var.auto_scaler.cpu_utilization_target
+    }
+    # load_balancing_utilization {
+    #   target = 0.8
+    # }
+  }
+
+  depends_on = [google_compute_region_instance_group_manager.webapp_instance_group_manager]
+}
+
+resource "google_compute_target_https_proxy" "webapp_https_proxy" {
+  count = var.replica
+  name  = "webapp-https-proxy-${count.index}"
+
+  url_map = google_compute_url_map.webapp_url_map[count.index].id
+
+  ssl_certificates = [
+    google_compute_managed_ssl_certificate.webapp_ssl_certificate.id
+  ]
+
+  depends_on = [google_compute_managed_ssl_certificate.webapp_ssl_certificate, google_compute_url_map.webapp_url_map]
+}
+
+resource "google_compute_global_forwarding_rule" "webapp_forwarding_rule" {
+  count                 = var.replica
+  name                  = "${var.webapp_forwarding_rule.name}-${count.index}"
+  ip_protocol           = var.webapp_forwarding_rule.ip_protocol
+  load_balancing_scheme = var.webapp_forwarding_rule.load_balancing_scheme
+  port_range            = var.webapp_forwarding_rule.port_range
+  target                = google_compute_target_https_proxy.webapp_https_proxy[count.index].id
+  ip_address            = google_compute_global_address.webapp_forward_address[count.index].id
+
+  depends_on = [google_compute_target_https_proxy.webapp_https_proxy]
+}
 
 variable "credentials_file_path" {
   description = "The path to the service account key file."
@@ -495,7 +698,15 @@ variable "firewall_deny" {
   })
 }
 
-
+variable "firewall_load_balancer_allow" {
+  description = "values for load balancer firewall allow"
+  type = object({
+    firewall_load_balancer_allow_protocol = string
+    firewall_load_balancer_allow_ports    = list(string)
+    firewall_load_balancer_allow_priority = number
+    source_ranges                         = list(string)
+  })
+}
 variable "compute_engine" {
   description = "values for compute engine"
   type = object({
@@ -507,6 +718,12 @@ variable "compute_engine" {
     boot_disk_size                           = number
     compute_engine_allow_stopping_for_update = bool
     compute_engine_service_account_scopes    = list(string)
+    can_ip_forward                           = bool
+    disk_auto_delete                         = bool
+    boot_disk                                = bool
+    reservation_affinity_type                = string
+    scheduling_automatic_restart             = bool
+    scheduling_preemptible                   = bool
   })
 }
 
@@ -629,6 +846,77 @@ variable "cloud_function" {
   })
 }
 
+variable "health_check" {
+  description = "Health Check variables"
+  type = object({
+    name                = string
+    check_interval_sec  = number
+    timeout_sec         = number
+    healthy_threshold   = number
+    unhealthy_threshold = number
+    port_name           = string
+    request_path        = string
+    port                = string
 
+  })
 
+}
+
+variable "webapp_instance_group_manager" {
+  description = "Webapp Instance Group Manager variables"
+  type = object({
+    name                                 = string
+    base_instance_name                   = string
+    description                          = string
+    distribution_policy_zones            = list(string)
+    distribution_policy_target_shape     = string
+    life_cycle_create_before_destroy     = bool
+    auto_healing_policy_inital_delay_sec = number
+    force_update_on_repair               = string
+    default_action_on_failure            = string
+
+  })
+}
+
+variable "load_balancer" {
+  description = "Load Balancer variables"
+  type = object({
+    name                  = string
+    protocol              = string
+    port_name             = string
+    load_balancing_scheme = string
+    timeout_sec           = number
+    enable_cdn            = bool
+    balancing_mode        = string
+    capacity_scaler       = number
+    locality_lb_policy    = string
+  })
+}
+
+variable "auto_scaler" {
+  description = "Auto Scaler variables"
+  type = object({
+    name                   = string
+    max_repliacs           = number
+    min_replicas           = number
+    cooldown_period        = number
+    cpu_utilization_target = number
+  })
+
+}
+
+variable "webapp_forwarding_rule" {
+  description = "Webapp Forwarding Rule variables"
+  type = object({
+    name                  = string
+    ip_protocol           = string
+    load_balancing_scheme = string
+    port_range            = string
+  })
+}
+
+variable "ssl_certificates" {
+  description = "The SSL certificates to use for the load balancer."
+  type        = list(string)
+}
 
