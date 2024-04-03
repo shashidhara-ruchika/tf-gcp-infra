@@ -80,6 +80,7 @@ Used
 - Service Networking API
 - Cloud Build API
 - Cloud DNS API
+- Certificate Manager API
 
 Unused:
 - Cloud OS Login API					
