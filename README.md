@@ -42,8 +42,16 @@ Sending Email Verification through Servless CLoud Function
 ### Identity and Access Management
 Separate IAM roles for:
    - Creating resources
-   - Logging & Metric FUnctionalities
-   - Running Cloud FUnctions
+   - Logging & Metric Functionalities
+   - Running Cloud Functions
+
+### Cloud Key Management Service
+- Key ring being used for deployment
+- Separate Customer managed key resources for:
+  - Virtual Machines
+  - CloudSQL Instance
+  - Cloud Storage Buckets
+- Customer managed keys rotated with 30 day rotation period (configurable) used while launching resources 
    
 
 ## How to build & run the application
@@ -90,6 +98,8 @@ Used
 - Cloud Build API
 - Cloud DNS API
 - Certificate Manager API
+- Service Usage API	
+- Cloud Key Management Service (KMS) API
 
 Unused:
 - Cloud OS Login API					
@@ -98,8 +108,7 @@ Unused:
 - Firewall Insights API					
 - Google Cloud Storage JSON API					
 - IAM Service Account Credentials API					
-- Legacy Cloud Source Repositories API
-- Service Usage API					
+- Legacy Cloud Source Repositories API			
 - Stackdriver API
 
 ## References:
