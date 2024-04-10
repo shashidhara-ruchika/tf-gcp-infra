@@ -3,6 +3,11 @@ provider "google" {
   project     = var.project_id
 }
 
+provider "google-beta" {
+  credentials = file(var.credentials_file_path)
+  project     = var.project_id
+}
+
 resource "google_service_account" "service_account" {
   account_id                   = var.service_account.account_id
   display_name                 = var.service_account.display_name
@@ -301,6 +306,9 @@ resource "google_compute_region_instance_template" "webapp_instance_template" {
     disk_type    = var.compute_engine.boot_disk_type
     auto_delete  = var.compute_engine.disk_auto_delete
     boot         = var.compute_engine.boot_disk
+    disk_encryption_key {
+      kms_key_self_link = google_kms_crypto_key.vm_crypto_key.id
+    }
   }
 
   reservation_affinity {
@@ -333,7 +341,7 @@ resource "google_compute_region_instance_template" "webapp_instance_template" {
 
   metadata_startup_script = "#!/bin/bash\ncd /opt/csye6225/webapp\nsed -i \"s/DATABASE_NAME=.*/DATABASE_NAME=${var.database.database_name}/\" .env\nsed -i \"s/DATABASE_USER=.*/DATABASE_USER=${var.database.database_user}/\" .env\nsed -i \"s/DATABASE_PASSWORD=.*/DATABASE_PASSWORD=${random_password.webapp_db_password.result}/\" .env\nsed -i \"s/DATABASE_HOST=.*/DATABASE_HOST=${google_sql_database_instance.webapp_cloudsql_instance.ip_address.0.ip_address}/\" .env\nsudo systemctl daemon-reload\nsudo systemctl restart webapp\nsudo systemctl daemon-reload\n"
 
-  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer, google_pubsub_topic.verify_email_topic, google_pubsub_subscription.verify_email_subscription, google_vpc_access_connector.serverless_connector]
+  depends_on = [google_compute_subnetwork.webapp, google_compute_firewall.allow_iap, google_compute_firewall.deny_all, google_sql_database.webapp_db, google_sql_user.webapp_db_user, google_project_iam_binding.service_account_logging_admin, google_project_iam_binding.service_account_monitoring_metric_writer, google_pubsub_topic.verify_email_topic, google_pubsub_subscription.verify_email_subscription, google_vpc_access_connector.serverless_connector, google_kms_crypto_key.vm_crypto_key]
 }
 
 resource "google_sql_database_instance" "webapp_cloudsql_instance" {
@@ -342,6 +350,7 @@ resource "google_sql_database_instance" "webapp_cloudsql_instance" {
   region              = var.database.region
   deletion_protection = var.database.deletion_protection
   root_password       = var.database.root_password
+  encryption_key_name = google_kms_crypto_key.cloudsql_crypto_key.id
 
   settings {
     tier              = var.database.tier
@@ -361,7 +370,7 @@ resource "google_sql_database_instance" "webapp_cloudsql_instance" {
 
   }
 
-  depends_on = [google_compute_network.vpc, google_service_networking_connection.private_vpc_connection, google_pubsub_subscription.verify_email_subscription, google_pubsub_topic_iam_binding.verify_email_topic_binding]
+  depends_on = [google_compute_network.vpc, google_service_networking_connection.private_vpc_connection, google_pubsub_subscription.verify_email_subscription, google_pubsub_topic_iam_binding.verify_email_topic_binding, google_kms_crypto_key.cloudsql_crypto_key]
 }
 
 resource "google_sql_database" "webapp_db" {
@@ -421,13 +430,13 @@ resource "google_cloudfunctions2_function" "function" {
   build_config {
     runtime     = var.cloud_function.build_config.runtime
     entry_point = var.cloud_function.build_config.entry_point
-    environment_variables = {
-      BUILD_CONFIG_TEST = "build_test"
-    }
+    # environment_variables = {
+    #   BUILD_CONFIG_TEST = "build_test"
+    # }
     source {
       storage_source {
-        bucket = var.cloud_function.build_config.source_bucket
-        object = var.cloud_function.build_config.source_object
+        bucket = google_storage_bucket.webapp_bucket.name
+        object = google_storage_bucket_object.serverless_zip.name
       }
     }
   }
@@ -467,7 +476,7 @@ resource "google_cloudfunctions2_function" "function" {
     service_account_email = google_service_account.service_account.email
   }
 
-  depends_on = [google_sql_database_instance.webapp_cloudsql_instance, google_pubsub_topic.verify_email_topic]
+  depends_on = [google_sql_database_instance.webapp_cloudsql_instance, google_pubsub_topic.verify_email_topic, google_storage_bucket_object.serverless_zip, google_vpc_access_connector.serverless_connector]
 }
 
 resource "google_compute_health_check" "webapp_health_check" {
@@ -511,9 +520,9 @@ resource "google_compute_region_instance_group_manager" "webapp_instance_group_m
     create_before_destroy = true
   }
 
-  instance_lifecycle_policy {
-    default_action_on_failure = var.webapp_instance_group_manager.default_action_on_failure
-  }
+  # instance_lifecycle_policy {
+  #   default_action_on_failure = var.webapp_instance_group_manager.default_action_on_failure
+  # }
 
   depends_on = [google_compute_region_instance_template.webapp_instance_template, google_compute_health_check.webapp_health_check]
 }
@@ -591,6 +600,100 @@ resource "google_compute_global_forwarding_rule" "webapp_forwarding_rule" {
   ip_address            = google_compute_global_address.webapp_forward_address[count.index].id
 
   depends_on = [google_compute_target_https_proxy.webapp_https_proxy]
+}
+
+resource "google_project_service_identity" "sqladmin_service_identity_account" {
+  provider = google-beta
+  project  = var.project_id
+  service  = var.sqladmin_service_identity_account_service
+}
+
+resource "random_string" "key_ring_name" {
+  length  = var.key_ring.length
+  special = var.key_ring.special_characters
+}
+
+resource "google_kms_key_ring" "webapp_key_ring" {
+  project  = var.project_id
+  location = var.region
+  name     = "${var.key_ring.name}-${random_string.key_ring_name.result}"
+
+  lifecycle {
+    prevent_destroy = false
+  }
+
+  depends_on = [random_string.key_ring_name]
+}
+resource "google_kms_crypto_key" "vm_crypto_key" {
+  name            = "vm_crypto_key"
+  key_ring        = google_kms_key_ring.webapp_key_ring.id
+  rotation_period = var.key_ring.rotation_period
+  lifecycle {
+    prevent_destroy = false
+  }
+
+  depends_on = [google_kms_key_ring.webapp_key_ring]
+}
+resource "google_kms_crypto_key" "cloudsql_crypto_key" {
+  name            = "cloudsql_crypto_key"
+  key_ring        = google_kms_key_ring.webapp_key_ring.id
+  rotation_period = var.key_ring.rotation_period
+  lifecycle {
+    prevent_destroy = false
+  }
+
+  depends_on = [google_kms_key_ring.webapp_key_ring]
+}
+resource "google_kms_crypto_key" "cloudstorage_crypto_key" {
+  name            = "cloudstorage_crypto_key"
+  key_ring        = google_kms_key_ring.webapp_key_ring.id
+  rotation_period = var.key_ring.rotation_period
+  lifecycle {
+    prevent_destroy = false
+  }
+
+  depends_on = [google_kms_key_ring.webapp_key_ring]
+}
+resource "google_kms_crypto_key_iam_binding" "vm_binding" {
+  crypto_key_id = google_kms_crypto_key.vm_crypto_key.id
+  role          = var.roles.crypto_key_encrypter_decrypter
+  members       = ["serviceAccount:${var.service_agents.compute_engine_service_agent}"]
+
+  depends_on = [google_kms_crypto_key.vm_crypto_key]
+}
+resource "google_kms_crypto_key_iam_binding" "cloudsql_binding" {
+  crypto_key_id = google_kms_crypto_key.cloudsql_crypto_key.id
+  role          = var.roles.crypto_key_encrypter_decrypter
+  members       = ["serviceAccount:${google_project_service_identity.sqladmin_service_identity_account.email}"]
+
+  depends_on = [google_kms_crypto_key.cloudsql_crypto_key]
+}
+resource "google_kms_crypto_key_iam_binding" "cloudstorage_binding" {
+  crypto_key_id = google_kms_crypto_key.cloudstorage_crypto_key.id
+  role          = var.roles.crypto_key_encrypter_decrypter
+  members       = ["serviceAccount:${var.service_agents.cloud_storage_service_agent}"]
+
+  depends_on = [google_kms_crypto_key.cloudstorage_crypto_key]
+}
+
+resource "google_storage_bucket" "webapp_bucket" {
+  name          = var.cloud_function.build_config.source_bucket
+  location      = var.region
+  force_destroy = var.bucket.force_destroy
+
+  public_access_prevention = var.bucket.public_access_prevention
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.cloudstorage_crypto_key.id
+  }
+
+  depends_on = [google_kms_crypto_key.cloudstorage_crypto_key, google_kms_crypto_key_iam_binding.cloudstorage_binding]
+}
+resource "google_storage_bucket_object" "serverless_zip" {
+  name   = var.cloud_function.build_config.source_object
+  bucket = google_storage_bucket.webapp_bucket.name
+  source = var.bucket.source
+
+  depends_on = [google_storage_bucket.webapp_bucket]
 }
 
 variable "credentials_file_path" {
@@ -769,6 +872,15 @@ variable "service_account" {
 
 }
 
+
+variable "service_agents" {
+  description = "Service account variables"
+  type = object({
+    compute_engine_service_agent = string
+    cloud_storage_service_agent  = string
+  })
+
+}
 variable "roles" {
   description = "Project Iam Binding Roles"
   type = object({
@@ -784,6 +896,8 @@ variable "roles" {
     artifact_registry_create_on_push_writer = string
     storage_object_admin_role               = string
     logs_writer_role                        = string
+
+    crypto_key_encrypter_decrypter = string
   })
 }
 
@@ -920,3 +1034,30 @@ variable "ssl_certificates" {
   type        = list(string)
 }
 
+
+variable "sqladmin_service_identity_account_service" {
+  description = "The service account email for the sqladmin service account."
+  type        = string
+}
+
+variable "key_ring" {
+  description = "The key ring to create."
+  type = object({
+    name                      = string
+    length                    = number
+    special_characters        = bool
+    lifecycle_prevent_destroy = bool
+    rotation_period           = string
+  })
+
+}
+
+
+variable "bucket" {
+  description = "The bucket to create."
+  type = object({
+    force_destroy            = bool
+    public_access_prevention = string
+    source                   = string
+  })
+}
